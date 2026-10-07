@@ -1,22 +1,34 @@
+import { login as loginApi, logout as logoutApi } from '@/api/auth'
+import { clearAuthCache, getAccessToken, getUserInfo, setAuth, setAuthListener } from '@/utils/auth'
+import type { LoginRequest, UserVO } from '@/types/user'
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
 export const useUserStore = defineStore('user', () => {
-  const accessToken = ref(localStorage.getItem('access_token') ?? '')
-  const nickname = ref('')
+  // 初始值取自本地凭证；后续 refresh 导致的变化通过监听同步
+  const isLoggedIn = ref(!!getAccessToken())
+  const user = ref<UserVO | null>(getUserInfo())
 
-  const isLoggedIn = computed(() => !!accessToken.value)
+  const displayName = computed(() => user.value?.nickname || user.value?.username || '')
 
-  function setToken(token: string) {
-    accessToken.value = token
-    localStorage.setItem('access_token', token)
+  setAuthListener((data) => {
+    isLoggedIn.value = !!data
+    user.value = data?.user ?? null
+  })
+
+  async function login(payload: LoginRequest) {
+    // setAuth 内部会写入凭证、通知监听器并启动自动续期
+    setAuth(await loginApi(payload))
   }
 
-  function logout() {
-    accessToken.value = ''
-    nickname.value = ''
-    localStorage.removeItem('access_token')
+  async function logout() {
+    try {
+      await logoutApi()
+    } finally {
+      // 无论后端注销是否成功，本地凭证都清掉
+      clearAuthCache()
+    }
   }
 
-  return { accessToken, nickname, isLoggedIn, setToken, logout }
+  return { isLoggedIn, user, displayName, login, logout }
 })

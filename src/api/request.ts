@@ -1,12 +1,15 @@
+import { clearAuthCache, getAccessToken, refreshAccessToken } from '@/utils/auth'
+import type { ApiResult } from '@/types/api'
 import axios from 'axios'
-import type { AxiosRequestConfig } from 'axios'
+import type { AxiosRequestConfig, InternalAxiosRequestConfig } from 'axios'
 import { ElMessage } from 'element-plus'
+import router from '@/router'
 
-/** 后端统一响应结构 */
-export interface ApiResult<T = unknown> {
-  code: number
-  message: string
-  data: T
+export type { ApiResult } from '@/types/api'
+
+/** 已尝试过刷新重试的请求标记 */
+interface RetriableConfig extends InternalAxiosRequestConfig {
+  _retried?: boolean
 }
 
 const request = axios.create({
@@ -14,16 +17,17 @@ const request = axios.create({
   timeout: 10000,
 })
 
-// 请求拦截：携带 Access Token
+// 请求拦截：从本地凭证取 Access Token（定时续期会持续覆盖它）
 request.interceptors.request.use((config) => {
-  const token = localStorage.getItem('access_token')
+  const token = getAccessToken()
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
   }
   return config
 })
 
-// 响应拦截：拆包统一响应结构，集中处理错误
+// 响应拦截：拆包统一响应结构；401 时刷新 Token 重试，失败则回登录页
+// （主动续期已覆盖大部分过期场景，这里是兜底：定时器漂移、多端踢下线等）
 request.interceptors.response.use(
   (response) => {
     const result = response.data as ApiResult
@@ -33,11 +37,23 @@ request.interceptors.response.use(
     }
     return result.data as never
   },
-  (error) => {
-    if (error.response?.status === 401) {
-      // TODO: 跳转登录页 / 刷新 Token
-      localStorage.removeItem('access_token')
+  async (error) => {
+    const config = error.config as RetriableConfig | undefined
+    // auth 接口自身的 401（如密码错误）不做刷新重试
+    const isAuthApi = !!config?.url?.includes('/auth/')
+
+    if (error.response?.status === 401 && config && !config._retried && !isAuthApi) {
+      config._retried = true
+      const token = await refreshAccessToken()
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`
+        return request(config)
+      }
+      // refresh 也失败了：清空凭证回登录页
+      clearAuthCache()
+      router.push('/login')
     }
+
     ElMessage.error(error.response?.data?.message || error.message || '网络异常')
     return Promise.reject(error)
   },

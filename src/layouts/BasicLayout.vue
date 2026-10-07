@@ -1,8 +1,24 @@
 <script setup lang="ts">
-import { DataAnalysis, Link } from '@element-plus/icons-vue'
-import { useRoute } from 'vue-router'
+import { ArrowDown, DataAnalysis, Link, SwitchButton, User, UserFilled } from '@element-plus/icons-vue'
+import { useUserStore } from '@/stores/user'
+import { ElMessage } from 'element-plus'
+import { useRoute, useRouter } from 'vue-router'
 
 const route = useRoute()
+const router = useRouter()
+const userStore = useUserStore()
+
+async function handleCommand(command: string) {
+  if (command === 'profile') {
+    router.push('/profile')
+    return
+  }
+  if (command === 'logout') {
+    await userStore.logout()
+    ElMessage.success('已退出登录')
+    router.push('/login')
+  }
+}
 </script>
 
 <template>
@@ -23,6 +39,19 @@ const route = useRoute()
     <el-container>
       <el-header class="basic-layout__header">
         <span>{{ route.meta.title }}</span>
+        <el-dropdown @command="handleCommand">
+          <span class="basic-layout__user">
+            <el-icon><User /></el-icon>
+            {{ userStore.displayName }}
+            <el-icon><ArrowDown /></el-icon>
+          </span>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="profile" :icon="UserFilled">个人中心</el-dropdown-item>
+              <el-dropdown-item command="logout" :icon="SwitchButton">退出登录</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </el-header>
       <el-main>
         <router-view />
@@ -67,8 +96,20 @@ const route = useRoute()
 .basic-layout__header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   border-bottom: 1px solid #e4e7ed;
   font-size: 16px;
   font-weight: 600;
+}
+
+.basic-layout__user {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 400;
+  color: #606266;
+  cursor: pointer;
+  outline: none;
 }
 </style>

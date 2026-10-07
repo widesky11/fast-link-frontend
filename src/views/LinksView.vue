@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { createLink, deleteLink, pageLinks, updateLink } from '@/api/link'
+import { createLink, deleteLink, getLinkDetail, pageLinks, updateLink } from '@/api/link'
+import LinkStatsDialog from '@/components/LinkStatsDialog.vue'
 import { LinkStatus } from '@/types/link'
 import type { CreateLinkRequest, LinkStatusValue, LinkVO } from '@/types/link'
+import dayjs from 'dayjs'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { onMounted, reactive, ref } from 'vue'
@@ -104,15 +106,33 @@ function openCreateDialog() {
   dialogVisible.value = true
 }
 
-function openEditDialog(row: LinkVO) {
-  editingId.value = row.id
-  dialogTitle.value = '编辑短链'
-  form.originUrl = row.originUrl
-  form.title = row.title ?? ''
-  form.description = row.description ?? ''
-  form.expiredAt = row.expiredAt ?? undefined
-  form.status = row.status
-  dialogVisible.value = true
+// 编辑前先拉详情，避免基于列表的陈旧数据修改（多端同时操作时）
+const editLoadingId = ref<string | null>(null)
+
+async function openEditDialog(row: LinkVO) {
+  editLoadingId.value = row.id
+  try {
+    const detail = await getLinkDetail(row.id)
+    editingId.value = detail.id
+    dialogTitle.value = '编辑短链'
+    form.originUrl = detail.originUrl
+    form.title = detail.title ?? ''
+    form.description = detail.description ?? ''
+    form.expiredAt = detail.expiredAt ?? undefined
+    form.status = detail.status
+    dialogVisible.value = true
+  } finally {
+    editLoadingId.value = null
+  }
+}
+
+// ---------- 统计弹窗 ----------
+const statsDialogVisible = ref(false)
+const statsLink = ref<LinkVO | null>(null)
+
+function openStatsDialog(row: LinkVO) {
+  statsLink.value = row
+  statsDialogVisible.value = true
 }
 
 async function handleSubmit() {
@@ -169,8 +189,26 @@ function fullShortUrl(shortCode: string) {
 }
 
 async function copyShortUrl(shortCode: string) {
-  await navigator.clipboard.writeText(fullShortUrl(shortCode))
+  const url = fullShortUrl(shortCode)
+  try {
+    await navigator.clipboard.writeText(url)
+  } catch {
+    // 非安全上下文（HTTP 非 localhost）clipboard API 不可用，降级用 textarea
+    const textarea = document.createElement('textarea')
+    textarea.value = url
+    textarea.style.position = 'fixed'
+    textarea.style.opacity = '0'
+    document.body.appendChild(textarea)
+    textarea.select()
+    document.execCommand('copy')
+    document.body.removeChild(textarea)
+  }
   ElMessage.success('短链已复制')
+}
+
+/** 是否已过期（后端跳转接口对过期短链返回 410） */
+function isExpired(row: LinkVO) {
+  return !!row.expiredAt && dayjs(row.expiredAt).isBefore(dayjs())
 }
 
 onMounted(fetchList)
@@ -220,16 +258,25 @@ onMounted(fetchList)
             <el-button link type="primary" size="small" @click="copyShortUrl(row.shortCode)">
               复制
             </el-button>
-            <el-button
-              link
-              type="primary"
-              size="small"
-              tag="a"
-              :href="fullShortUrl(row.shortCode)"
-              target="_blank"
+            <el-tooltip
+              :content="row.status !== LinkStatus.ENABLED ? '非启用状态，跳转会返回 410 已失效' : ''"
+              :disabled="row.status === LinkStatus.ENABLED"
+              placement="top"
             >
-              访问
-            </el-button>
+              <span>
+                <el-button
+                  link
+                  type="primary"
+                  size="small"
+                  tag="a"
+                  :href="row.status === LinkStatus.ENABLED ? fullShortUrl(row.shortCode) : undefined"
+                  :target="row.status === LinkStatus.ENABLED ? '_blank' : undefined"
+                  :disabled="row.status !== LinkStatus.ENABLED"
+                >
+                  访问
+                </el-button>
+              </span>
+            </el-tooltip>
           </div>
           <div class="link-cell__title">{{ row.title || '-' }}</div>
         </template>
@@ -249,13 +296,32 @@ onMounted(fetchList)
       </el-table-column>
       <el-table-column label="过期时间" width="160">
         <template #default="{ row }: { row: LinkVO }">
-          {{ row.expiredAt ?? '永不过期' }}
+          <span v-if="!row.expiredAt">永不过期</span>
+          <span v-else-if="isExpired(row)" class="expired-text">{{ row.expiredAt }}（已过期）</span>
+          <span v-else>{{ row.expiredAt }}</span>
         </template>
       </el-table-column>
       <el-table-column prop="createTime" label="创建时间" width="160" />
-      <el-table-column label="操作" width="200" fixed="right">
+      <el-table-column label="操作" width="220" fixed="right">
         <template #default="{ row }: { row: LinkVO }">
-          <el-button link type="primary" @click="openEditDialog(row)">编辑</el-button>
+          <el-button link type="primary" @click="openStatsDialog(row)">统计</el-button>
+          <el-tooltip
+            content="封禁状态由风控管理，不可手动编辑"
+            :disabled="row.status !== LinkStatus.BANNED"
+            placement="top"
+          >
+            <span>
+              <el-button
+                link
+                type="primary"
+                :disabled="row.status === LinkStatus.BANNED"
+                :loading="editLoadingId === row.id"
+                @click="openEditDialog(row)"
+              >
+                编辑
+              </el-button>
+            </span>
+          </el-tooltip>
           <el-button
             v-if="row.status !== LinkStatus.BANNED"
             link
@@ -326,6 +392,9 @@ onMounted(fetchList)
       <el-button type="primary" :loading="submitting" @click="handleSubmit">确定</el-button>
     </template>
   </el-dialog>
+
+  <!-- 点击统计弹窗 -->
+  <LinkStatsDialog v-model="statsDialogVisible" :link="statsLink" />
 </template>
 
 <style scoped>
@@ -343,6 +412,10 @@ onMounted(fetchList)
 .link-cell__title {
   color: #909399;
   font-size: 12px;
+}
+
+.expired-text {
+  color: #f56c6c;
 }
 
 .links-pagination {
