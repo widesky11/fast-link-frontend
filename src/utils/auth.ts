@@ -33,12 +33,18 @@ export function getUserInfo(): UserVO | null {
   return raw ? (JSON.parse(raw) as UserVO) : null
 }
 
-/** 认证状态变化监听：Pinia store 借此同步内存状态 */
-type AuthListener = (data: LoginVO | null) => void
+/** 认证状态变化监听：Pinia store 借此同步内存状态（结构子集，只需携带 user） */
+type AuthListener = (data: { user: UserVO } | null) => void
 let authListener: AuthListener | null = null
 
 export function setAuthListener(listener: AuthListener | null) {
   authListener = listener
+}
+
+/** 资料更新后同步本地缓存的用户信息（不触碰 token 与续期定时器） */
+export function updateStoredUser(user: UserVO) {
+  localStorage.setItem(TOKEN_KEYS.user, JSON.stringify(user))
+  authListener?.({ user })
 }
 
 /** 登录 / 刷新成功后写入凭证，并重置自动续期定时器 */

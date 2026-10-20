@@ -35,3 +35,15 @@ export interface RegisterRequest {
   nickname?: string
   email?: string
 }
+
+/** 更新资料请求，与后端 UpdateProfileRequest 对应（空串 = 清除该字段） */
+export interface UpdateProfileRequest {
+  nickname?: string
+  email?: string
+}
+
+/** 修改密码请求，与后端 UpdatePasswordRequest 对应 */
+export interface UpdatePasswordRequest {
+  oldPassword: string
+  newPassword: string
+}

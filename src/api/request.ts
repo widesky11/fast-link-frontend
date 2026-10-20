@@ -54,6 +54,12 @@ request.interceptors.response.use(
       router.push('/login')
     }
 
+    // 429 限流：用警告级提示（后端滑动窗口限流，文案直接取自响应）
+    if (error.response?.status === 429) {
+      ElMessage.warning(error.response.data?.message || '操作过于频繁，请稍后再试')
+      return Promise.reject(error)
+    }
+
     ElMessage.error(error.response?.data?.message || error.message || '网络异常')
     return Promise.reject(error)
   },

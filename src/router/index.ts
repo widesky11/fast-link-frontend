@@ -26,6 +26,24 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '短链管理' },
       },
       {
+        path: 'campaigns',
+        name: 'Campaigns',
+        component: () => import('@/views/CampaignsView.vue'),
+        meta: { title: '活动管理' },
+      },
+      {
+        path: 'campaigns/:id',
+        name: 'CampaignDetail',
+        component: () => import('@/views/CampaignDetailView.vue'),
+        meta: { title: '活动详情' },
+      },
+      {
+        path: 'logs',
+        name: 'ClickLogs',
+        component: () => import('@/views/ClickLogsView.vue'),
+        meta: { title: '点击日志' },
+      },
+      {
         path: 'profile',
         name: 'Profile',
         component: () => import('@/views/ProfileView.vue'),

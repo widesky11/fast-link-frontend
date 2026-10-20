@@ -4,6 +4,39 @@
   box-sizing: border-box;
 }
 
+/* ================= FastLink 设计令牌 ================= */
+:root {
+  /* 品牌色 */
+  --fl-blue: #4f7cff;
+  --fl-teal: #36cfc9;
+  --fl-gradient: linear-gradient(135deg, #4f7cff, #36cfc9);
+
+  /* 深色夜景（登录页 / 侧边栏） */
+  --fl-ink-900: #0b1026;
+  --fl-ink-800: #131c3f;
+  --fl-ink-700: #1a2750;
+
+  /* 浅色内容区 */
+  --fl-bg: #f3f6fc;
+  --fl-border: #e6eaf3;
+  --fl-text-1: #1f2937;
+  --fl-text-2: #6b7280;
+  --fl-text-3: #9ca3af;
+
+  /* 形状与阴影 */
+  --fl-radius: 14px;
+  --fl-shadow-card: 0 12px 28px -12px rgba(31, 41, 87, 0.14);
+
+  /* Element Plus 主色对齐品牌蓝 */
+  --el-color-primary: #4f7cff;
+  --el-color-primary-light-3: #7d9dff;
+  --el-color-primary-light-5: #a5bcff;
+  --el-color-primary-light-7: #c9d7ff;
+  --el-color-primary-light-8: #dde6ff;
+  --el-color-primary-light-9: #eef3ff;
+  --el-color-primary-dark-2: #3f66d6;
+}
+
 html,
 body,
 #app {
@@ -14,5 +47,7 @@ body {
   font-family:
     'Helvetica Neue', Helvetica, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Arial,
     sans-serif;
-  background-color: #f5f7fa;
+  background-color: var(--fl-bg);
+  color: var(--fl-text-1);
+  -webkit-font-smoothing: antialiased;
 }

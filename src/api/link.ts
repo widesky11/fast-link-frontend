@@ -31,3 +31,12 @@ export function updateLink(id: string, data: UpdateLinkRequest): Promise<LinkVO>
 export function deleteLink(id: string): Promise<void> {
   return del(`/links/${id}`)
 }
+
+/**
+ * 批量删除短链 POST /links/batch-delete
+ * @param ids 雪花 ID 字符串数组，单次最多 100 条
+ * @returns 实际删除的行数
+ */
+export function batchDeleteLinks(ids: string[]): Promise<number> {
+  return post('/links/batch-delete', { ids })
+}

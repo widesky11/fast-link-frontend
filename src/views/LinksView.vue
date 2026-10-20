@@ -1,12 +1,17 @@
 <script setup lang="ts">
-import { createLink, deleteLink, getLinkDetail, pageLinks, updateLink } from '@/api/link'
+import { listCampaignCards, listChannels } from '@/api/campaign'
+import { batchDeleteLinks, createLink, deleteLink, getLinkDetail, pageLinks, updateLink } from '@/api/link'
 import LinkStatsDialog from '@/components/LinkStatsDialog.vue'
+import type { CampaignCardVO, ChannelVO } from '@/types/campaign'
 import { LinkStatus } from '@/types/link'
 import type { CreateLinkRequest, LinkStatusValue, LinkVO } from '@/types/link'
 import dayjs from 'dayjs'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import type { FormInstance, FormRules } from 'element-plus'
-import { onMounted, reactive, ref } from 'vue'
+import type { FormInstance, FormRules, TableInstance } from 'element-plus'
+import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
+
+const router = useRouter()
 
 const SHORT_DOMAIN = import.meta.env.VITE_SHORT_DOMAIN
 
@@ -84,6 +89,8 @@ const form = reactive<CreateLinkRequest & { status?: LinkStatusValue }>({
   description: '',
   expiredAt: undefined,
   status: undefined,
+  campaignId: undefined,
+  channelId: undefined,
 })
 
 const formRules: FormRules = {
@@ -103,7 +110,29 @@ function openCreateDialog() {
   form.description = ''
   form.expiredAt = undefined
   form.status = undefined
+  form.campaignId = undefined
+  form.channelId = undefined
+  channelOptions.value = []
+  loadCampaignOptions()
   dialogVisible.value = true
+}
+
+// ---------- 归因选择（仅创建时；LinkVO 不含归属信息，编辑不回填） ----------
+const campaignOptions = ref<CampaignCardVO[]>([])
+const channelOptions = ref<ChannelVO[]>([])
+
+async function loadCampaignOptions() {
+  if (campaignOptions.value.length > 0) return
+  // 只拉启用中的活动作为归因候选（卡片接口不分页）
+  campaignOptions.value = await listCampaignCards({ enabled: 1 })
+}
+
+async function handleFormCampaignChange(campaignId?: string) {
+  form.channelId = undefined
+  channelOptions.value = []
+  if (campaignId) {
+    channelOptions.value = await listChannels(campaignId)
+  }
 }
 
 // 编辑前先拉详情，避免基于列表的陈旧数据修改（多端同时操作时）
@@ -137,6 +166,11 @@ function openStatsDialog(row: LinkVO) {
 
 async function handleSubmit() {
   await formRef.value?.validate()
+  // 后端要求 campaignId 与 channelId 成对传入
+  if (!editingId.value && form.campaignId && !form.channelId) {
+    ElMessage.warning('归因需同时选择渠道，或取消活动选择')
+    return
+  }
   submitting.value = true
   try {
     const payload: CreateLinkRequest = {
@@ -144,6 +178,10 @@ async function handleSubmit() {
       title: form.title || undefined,
       description: form.description || undefined,
       expiredAt: form.expiredAt || undefined,
+    }
+    if (!editingId.value && form.campaignId && form.channelId) {
+      payload.campaignId = form.campaignId
+      payload.channelId = form.channelId
     }
     if (editingId.value) {
       await updateLink(editingId.value, { ...payload, status: form.status })
@@ -154,10 +192,35 @@ async function handleSubmit() {
     }
     dialogVisible.value = false
     fetchList()
+  } catch (e) {
+    // 触发创建限流（429）：冷却一段时间，禁用提交防继续刷
+    if ((e as { response?: { status?: number } })?.response?.status === 429) {
+      startCreateCooldown()
+    }
   } finally {
     submitting.value = false
   }
 }
+
+// ---------- 创建限流冷却（后端滑动窗口：10 次/分钟/用户） ----------
+const createCooldown = ref(0)
+let cooldownTimer: number | undefined
+
+function startCreateCooldown(seconds = 10) {
+  if (cooldownTimer !== undefined) return
+  createCooldown.value = seconds
+  cooldownTimer = window.setInterval(() => {
+    createCooldown.value -= 1
+    if (createCooldown.value <= 0) {
+      clearInterval(cooldownTimer)
+      cooldownTimer = undefined
+    }
+  }, 1000)
+}
+
+onBeforeUnmount(() => {
+  if (cooldownTimer !== undefined) clearInterval(cooldownTimer)
+})
 
 // ---------- 状态切换 / 删除 ----------
 async function handleToggleStatus(row: LinkVO) {
@@ -180,6 +243,33 @@ async function handleDelete(row: LinkVO) {
   if (tableData.value.length === 1 && query.page > 1) {
     query.page -= 1
   }
+  fetchList()
+}
+
+// ---------- 批量删除 ----------
+const tableRef = ref<TableInstance>()
+const selectedRows = ref<LinkVO[]>([])
+
+function handleSelectionChange(rows: LinkVO[]) {
+  selectedRows.value = rows
+}
+
+async function handleBatchDelete() {
+  const count = selectedRows.value.length
+  if (count === 0) return
+  await ElMessageBox.confirm(`确定删除选中的 ${count} 条短链吗？`, '批量删除', {
+    type: 'warning',
+    confirmButtonText: '删除',
+    cancelButtonText: '取消',
+  })
+  const deleted = await batchDeleteLinks(selectedRows.value.map((r) => r.id))
+  ElMessage.success(`已删除 ${deleted} 条短链`)
+  // 整页删完时回退一页
+  if (tableData.value.length === count && query.page > 1) {
+    query.page -= 1
+  }
+  tableRef.value?.clearSelection()
+  selectedRows.value = []
   fetchList()
 }
 
@@ -245,16 +335,35 @@ onMounted(fetchList)
         <el-button @click="handleReset">重置</el-button>
       </el-form-item>
       <el-form-item style="float: right">
+        <el-button type="danger" plain :disabled="selectedRows.length === 0" @click="handleBatchDelete">
+          批量删除{{ selectedRows.length ? `（${selectedRows.length}）` : '' }}
+        </el-button>
         <el-button type="primary" @click="openCreateDialog">创建短链</el-button>
       </el-form-item>
     </el-form>
 
     <!-- 列表 -->
-    <el-table v-loading="loading" :data="tableData" stripe>
+    <el-table
+      ref="tableRef"
+      v-loading="loading"
+      :data="tableData"
+      stripe
+      @selection-change="handleSelectionChange"
+    >
+      <el-table-column type="selection" width="45" />
       <el-table-column label="短链" min-width="200">
         <template #default="{ row }: { row: LinkVO }">
           <div class="link-cell">
-            <span class="link-cell__code">{{ row.shortCode }}</span>
+            <el-link
+              type="primary"
+              :underline="false"
+              :href="row.originUrl"
+              target="_blank"
+              class="link-cell__code"
+              title="点击访问原始链接"
+            >
+              {{ row.shortCode }}
+            </el-link>
             <el-button link type="primary" size="small" @click="copyShortUrl(row.shortCode)">
               复制
             </el-button>
@@ -301,7 +410,19 @@ onMounted(fetchList)
           <span v-else>{{ row.expiredAt }}</span>
         </template>
       </el-table-column>
-      <el-table-column prop="createTime" label="创建时间" width="160" />
+      <el-table-column label="活动归属" min-width="140">
+        <template #default="{ row }: { row: LinkVO }">
+          <el-link
+            v-if="row.campaignName"
+            type="primary"
+            :underline="false"
+            @click="router.push(`/campaigns/${row.campaignId}`)"
+          >
+            {{ row.campaignName }}
+          </el-link>
+          <span v-else class="no-campaign">无</span>
+        </template>
+      </el-table-column>
       <el-table-column label="操作" width="220" fixed="right">
         <template #default="{ row }: { row: LinkVO }">
           <el-button link type="primary" @click="openStatsDialog(row)">统计</el-button>
@@ -380,6 +501,27 @@ onMounted(fetchList)
           style="width: 100%"
         />
       </el-form-item>
+      <el-form-item v-if="!editingId" label="归因">
+        <div class="attribution-selects">
+          <el-select
+            v-model="form.campaignId"
+            placeholder="选择活动（选填）"
+            clearable
+            @change="handleFormCampaignChange"
+          >
+            <el-option v-for="c in campaignOptions" :key="c.id" :label="c.name" :value="c.id" />
+          </el-select>
+          <el-select
+            v-model="form.channelId"
+            placeholder="选择渠道"
+            :disabled="!form.campaignId"
+            clearable
+          >
+            <el-option v-for="ch in channelOptions" :key="ch.id" :label="ch.name" :value="ch.id" />
+          </el-select>
+        </div>
+        <div class="form-tip">选择活动与渠道后，该短链的点击将参与渠道归因统计</div>
+      </el-form-item>
       <el-form-item v-if="editingId" label="状态">
         <el-radio-group v-model="form.status">
           <el-radio :value="LinkStatus.ENABLED">启用</el-radio>
@@ -389,7 +531,14 @@ onMounted(fetchList)
     </el-form>
     <template #footer>
       <el-button @click="dialogVisible = false">取消</el-button>
-      <el-button type="primary" :loading="submitting" @click="handleSubmit">确定</el-button>
+      <el-button
+        type="primary"
+        :loading="submitting"
+        :disabled="createCooldown > 0"
+        @click="handleSubmit"
+      >
+        {{ createCooldown > 0 ? `请稍候（${createCooldown}s）` : '确定' }}
+      </el-button>
     </template>
   </el-dialog>
 
@@ -416,6 +565,26 @@ onMounted(fetchList)
 
 .expired-text {
   color: #f56c6c;
+}
+
+.no-campaign {
+  color: #c0c4cc;
+}
+
+.attribution-selects {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.attribution-selects .el-select {
+  flex: 1;
+}
+
+.form-tip {
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.5;
 }
 
 .links-pagination {
