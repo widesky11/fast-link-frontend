@@ -130,7 +130,7 @@ async function handleSubmit() {
       <section class="brand">
         <div class="brand-badge">
           <span class="brand-badge__dot" />
-          分布式短链接与访问分析平台
+          短链接与访问分析平台
         </div>
         <h1 class="brand-title">
           快链

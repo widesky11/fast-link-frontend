@@ -6,7 +6,7 @@ import type { UploadRequestOptions } from 'element-plus'
 import { ref } from 'vue'
 
 /**
- * 图片上传组件（后端中转方案，与苍穹外卖相同）：
+ * 图片上传组件：
  * 文件 POST 到后端 /files/upload，由后端转存 OSS 并返回完整 URL。
  * 浏览器只与后端同源通信，无需配置 OSS CORS。
  */
